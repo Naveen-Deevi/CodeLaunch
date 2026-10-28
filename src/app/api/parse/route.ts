@@ -192,7 +192,7 @@ Important constraints for generatedTests:
     }
 
     const { object } = await generateObject({
-      model: ollama("qwen2.5:3b"),
+      model: ollama("qwen"),
       schema: ProblemSchema,
       system: systemPrompt,
       messages: [
