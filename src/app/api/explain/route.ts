@@ -40,14 +40,13 @@ Student's Code:
 ${userCode}
 \`\`\`
 
-${
-  failedTest
-    ? `Failed Test Case:
+${failedTest
+        ? `Failed Test Case:
 Input: ${failedTest.input ?? "N/A"}
 Expected Output: ${failedTest.expectedOutput ?? "N/A"}
 Actual Output: ${failedTest.actualOutput ?? "N/A"}`
-    : ""
-}
+        : ""
+      }
 
 ${error ? `Compiler/Runtime Error:\n${error}` : ""}
 
@@ -60,8 +59,9 @@ Instructions:
 - Be encouraging and educational.
 - Keep the response under 200 words.`;
 
+    const modelName = process.env.OLLAMA_MODEL || "qwen2.5:3b";
     const result = await streamText({
-      model: ollama("qwen2.5:3b"),
+      model: ollama(modelName),
       prompt,
       maxOutputTokens: 400,
     });

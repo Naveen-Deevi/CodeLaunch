@@ -21,6 +21,7 @@ import {
 import { useProblemStore, ProblemData } from "@/store/useProblemStore";
 import { useRouter } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
+import { areOutputsEqual, sanitizeReturnType } from "@/lib/judge";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -154,7 +155,7 @@ function ProblemDescription({ problem }: { problem: ProblemData }) {
             Function Signature
           </h2>
           <div className="bg-black/30 border border-white/6 rounded-md p-3 font-mono text-xs text-blue-300">
-            {problem.functionSignature.returnType} {problem.functionSignature.name}(
+            {sanitizeReturnType(problem.functionSignature.returnType, problem.examples)} {problem.functionSignature.name}(
             {problem.functionSignature.parameters.map((p) => `${p.type} ${p.name}`).join(", ")}
             )
           </div>
@@ -445,10 +446,26 @@ export default function Workspace() {
 
   const executeCode = useCallback(
     async (stdin: string): Promise<TestResult & { rawStatus?: any }> => {
+      const sanitizedSignature = currentProblem?.functionSignature
+        ? {
+            ...currentProblem.functionSignature,
+            returnType: sanitizeReturnType(
+              currentProblem.functionSignature.returnType,
+              currentProblem.examples
+            ),
+          }
+        : undefined;
+
       const response = await fetch("/api/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, language, stdin, wrapCode: true, functionSignature: currentProblem.functionSignature }),
+        body: JSON.stringify({
+          code,
+          language,
+          stdin,
+          wrapCode: true,
+          functionSignature: sanitizedSignature,
+        }),
       });
 
       if (!response.ok) {
@@ -474,7 +491,7 @@ export default function Workspace() {
         rawStatus: data.status,
       };
     },
-    [code, language]
+    [code, language, currentProblem]
   );
 
   // ── Run ───────────────────────────────────────────────────────────────────
@@ -529,7 +546,7 @@ export default function Workspace() {
           return;
         }
 
-        const passed = result.actualOutput.trim() === tc.expected.trim();
+        const passed = areOutputsEqual(result.actualOutput, tc.expected);
         if (passed) {
           passedCount++;
         } else if (!failedTestResult) {

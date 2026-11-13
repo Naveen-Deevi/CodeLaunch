@@ -158,7 +158,9 @@ function buildJavaCode(userCode: string, functionSignature?: any): string {
 
   // Build result printing
   let printResult: string;
-  if (retType.includes("int[]") || retType.includes("integer[]")) {
+  if (retType.includes("int[][]") || retType.includes("integer[][]") || retType.includes("2d")) {
+    printResult = `System.out.println(java.util.Arrays.deepToString(_sol.${methodName}(${argNames.join(", ")})).replace(", ", ","));`;
+  } else if (retType.includes("int[]") || retType.includes("integer[]")) {
     printResult = `System.out.println(java.util.Arrays.toString(_sol.${methodName}(${argNames.join(", ")})).replace(", ", ","));`;
   } else if (retType.includes("list")) {
     printResult = `System.out.println(_sol.${methodName}(${argNames.join(", ")}).toString().replace(", ", ","));`;

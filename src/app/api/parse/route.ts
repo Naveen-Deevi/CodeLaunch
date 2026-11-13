@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateObject } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
+import { sanitizeReturnType } from "@/lib/judge";
 
 // ─── Zod Schema ───────────────────────────────────────────────────────────────
 
@@ -13,7 +14,11 @@ const FunctionParameterSchema = z.object({
 const FunctionSignatureSchema = z.object({
   name: z.string().describe("The function/method name"),
   parameters: z.array(FunctionParameterSchema),
-  returnType: z.string().describe("Return type in a language-agnostic form"),
+  returnType: z.string().describe(
+    "Return type in a language-agnostic form (e.g. 'int[]', 'string', 'int', 'boolean'). " +
+    "Crucial: Inspect the example output dimensions carefully. A 1D array like [0, 1] is 'int[]', NEVER 'int[][]'. " +
+    "Only use 'int[][]' if the output is a 2D matrix like [[1, 2], [3, 4]]."
+  ),
 });
 
 const OfficialExampleSchema = z.object({
@@ -51,39 +56,40 @@ interface Sig { name: string; parameters: Param[]; returnType: string; }
 
 function toJavaType(t: string): string {
   const s = t.toLowerCase().trim();
-  if (s === "int[]" || s === "integer[]") return "int[]";
-  if (s === "int" || s === "integer") return "int";
+  if (s === "int[][]" || s === "integer[][]" || s === "number[][]" || s === "2d array") return "int[][]";
+  if (s === "int[]" || s === "integer[]" || s === "number[]") return "int[]";
+  if (s === "int" || s === "integer" || s === "number") return "int";
   if (s === "string[]") return "String[]";
   if (s === "string") return "String";
-  if (s === "boolean") return "boolean";
+  if (s === "boolean" || s === "bool") return "boolean";
   if (s === "double" || s === "float") return "double";
   if (s === "long") return "long";
   if (s.startsWith("list<int") || s === "list<integer>") return "List<Integer>";
   if (s.startsWith("list<string")) return "List<String>";
   if (s.startsWith("list")) return "List<Object>";
-  if (s.startsWith("int[][]") || s === "2d array") return "int[][]";
   return t; // fallback: use as-is
 }
 
 function toPythonType(t: string): string {
   const s = t.toLowerCase().trim();
-  if (s === "int[]" || s === "integer[]" || s.includes("list<int")) return "List[int]";
-  if (s === "int" || s === "integer") return "int";
+  if (s.startsWith("int[][]") || s.startsWith("number[][]") || s === "list<list<int>>" || s === "list[list[int]]") return "List[List[int]]";
+  if (s === "int[]" || s === "integer[]" || s === "number[]" || s.includes("list<int")) return "List[int]";
+  if (s === "int" || s === "integer" || s === "number") return "int";
   if (s === "string[]" || s.includes("list<string")) return "List[str]";
   if (s === "string") return "str";
-  if (s === "boolean") return "bool";
+  if (s === "boolean" || s === "bool") return "bool";
   if (s === "double" || s === "float") return "float";
   if (s === "long") return "int";
-  if (s.startsWith("int[][]")) return "List[List[int]]";
   return "Any";
 }
 
 function toCType(t: string): string {
   const s = t.toLowerCase().trim();
-  if (s === "int[]" || s === "integer[]") return "int*";
-  if (s === "int" || s === "integer") return "int";
+  if (s.startsWith("int[][]") || s.startsWith("number[][]")) return "int**";
+  if (s === "int[]" || s === "integer[]" || s === "number[]") return "int*";
+  if (s === "int" || s === "integer" || s === "number") return "int";
   if (s === "string") return "char*";
-  if (s === "boolean") return "int";
+  if (s === "boolean" || s === "bool") return "int";
   if (s === "double" || s === "float") return "double";
   if (s === "long") return "long";
   return "int";
@@ -165,7 +171,13 @@ export async function POST(req: Request) {
 Your job:
 1. Parse the given programming problem (text or screenshot).
 2. Produce a strongly-typed JSON object that conforms exactly to the requested schema.
-3. Extract the correct functionSignature: name, parameter names+types, and returnType – all in language-agnostic form (e.g. 'int[]', 'string', 'int').
+3. Extract the correct functionSignature: name, parameter names+types, and returnType in language-agnostic form:
+   - CRITICAL: Carefully inspect the example outputs to determine the correct returnType and dimensions.
+   - If the example output is a 1D array of integers (e.g. [0, 1] or [1, 2, 3]), returnType MUST be 'int[]'. DO NOT return 'int[][]'.
+   - If the example output is a 2D matrix/nested list (e.g. [[1, 2], [3, 4]]), returnType is 'int[][]'.
+   - If the example output is a single integer (e.g. 42), returnType is 'int'.
+   - If the example output is a boolean (e.g. true/false), returnType is 'boolean'.
+   - If the example output is a string (e.g. "hello"), returnType is 'string'.
 4. For examples: copy ONLY what is explicitly stated in the problem. Do not invent new examples here.
 5. For generatedTests: create 3-7 creative test cases covering normal behaviour, edge cases, boundary values, and at least one stress case. Every test case MUST respect all stated constraints.
 6. The expectedOutput in generatedTests must be your best-effort computation of the correct answer.
@@ -191,8 +203,10 @@ Important constraints for generatedTests:
       messageContent.push({ type: "text", text: problemText as string });
     }
 
+    const modelName = process.env.OLLAMA_MODEL || "qwen2.5:3b";
+
     const { object } = await generateObject({
-      model: ollama("qwen"),
+      model: ollama(modelName),
       schema: ProblemSchema,
       system: systemPrompt,
       messages: [
@@ -202,6 +216,12 @@ Important constraints for generatedTests:
         },
       ],
     });
+
+    // ── Sanitize returnType based on actual examples to prevent dimensional hallucinations ──
+    object.functionSignature.returnType = sanitizeReturnType(
+      object.functionSignature.returnType,
+      object.examples
+    );
 
     // ── Generate boilerplate server-side from the function signature ──────────
     const sig = object.functionSignature;
